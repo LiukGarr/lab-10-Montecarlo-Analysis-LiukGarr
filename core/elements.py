@@ -86,6 +86,9 @@ class Lightpath(Signal_information):
     def update_ISNR(self, ISNR):
         self._ISNR += ISNR
 
+    def reset_ISNR(self):
+        self._ISNR = 0.0
+
     @property
     def ISNR(self):
         return self._ISNR
@@ -386,11 +389,14 @@ class Network(object):
         self._route_space = 0
         self._path_conn = {}
         self._optimal_pow = 0.0
+        self._all_GSNRs = []
+        self._all_Rbs = []
         self._traffic_matrix = []
-        self._M = 1
+        self._M = 0
         self._num_nodes = 0
         self._list_of_nodes = []
         self._num_stream = 0
+        self._MC_runs = 0
         # self._switching_mat = None
         for nds in data:
             self._list_of_nodes.append(nds)
@@ -445,9 +451,11 @@ class Network(object):
     @property
     def traffic_matrix(self):
         return self._traffic_matrix
+
     @traffic_matrix.setter
     def traffic_matrix(self, tr_mat):
         self._traffic_matrix = tr_mat
+
     def calculate_bit_rate(self, sign_info, strategy):
         r_b = 0
         GSNR = sign_info.signal_power/sign_info.noise_power
@@ -479,8 +487,9 @@ class Network(object):
             else:
                 # GSNR = db2lin(self._path_conn[path].snr)
                 # GSNR = self._path_conn[path].snr
-                r_b = 2*R_s*log(1+GSNR*(R_s/B_n), 2) / 1e9
+                r_b = 2*R_s*log(1+GSNR*(R_s/B_n), 2)/ 1e9
         return r_b
+
     def nodes(self):
         return self._nodes
 
@@ -558,6 +567,10 @@ class Network(object):
             best_snr = round(snr(self._sign_info[best_path].signal_power, list_noise[pos_best_lat]), 3)
         return best_lat, best_path, best_snr
 
+    def set_M_and_MC_runs(self, m_sel, MC_runs):
+        self._M = m_sel
+        self._MC_runs = MC_runs
+
     def matrix_connections(self):
         node1 = random.choice(self._list_of_nodes)
         node2 = random.choice(self._list_of_nodes)
@@ -611,19 +624,12 @@ class Network(object):
         else:
             return False
 
-    def stream_w_matrix(self, label):
+    def matrix_w_varying_m(self, label, default_ch_av, max_val):
         result = []
-        default_ch_av = []
-        channel_availability = [1] * channels
-        num_of_loops = 0
-        for path in self._all_paths:
-            dim = [path, channel_availability]
-            default_ch_av.append(dim)
-        max_val = self._num_nodes ** 2
         for M in range(1, 51):
             self._num_stream = 0
             num_of_loops = 0
-            cnt = 0
+            block_ev = 0
             occupied.clear()
             occupied_channels.clear()
             self._line_occ.clear()
@@ -634,24 +640,80 @@ class Network(object):
             self._traffic_matrix = 100 * M * np.ones((self._num_nodes, self._num_nodes))
             self._traffic_matrix[np.diag_indices_from(self._traffic_matrix)] = 0
             is_sat = False
-            while not is_sat and cnt < max_val:
+            while not is_sat and block_ev < max_val:
                 node1, node2 = self.matrix_connections()
                 is_inf = self.matrix_availability_slot(node1, node2)
                 if not is_inf:
                     res = self.stream(node1, node2, label)
                     if res[2] != "Quit":
-                        if res[2] != 0.0:
-                            self.matrix_mgmt(node1, node2, res[2])
-                            is_sat = self.matrix_saturated()
-                            num_of_loops += 1
-                        else:
-                            cnt += 1
+                        self.matrix_mgmt(node1, node2, res[2])
+                        is_sat = self.matrix_saturated()
+                        num_of_loops += 1
                     else:
-                        cnt += 1
-            # print(M, self._num_stream)
-            dato = [M, self._num_stream]
+                        block_ev += 1
+            print(M)
+            print(min(self._all_Rbs), max(self._all_Rbs), round(np.average(self._all_Rbs), 3), sum(self._all_Rbs))
+            print(min(self._all_GSNRs), max(self._all_GSNRs), round(np.average(self._all_GSNRs), 2))
+            dato = [M, min(self._all_Rbs), max(self._all_Rbs), round(np.average(self._all_Rbs), 3), sum(self._all_Rbs),
+                    min(self._all_GSNRs), max(self._all_GSNRs), round(np.average(self._all_GSNRs), 2), block_ev]
             result.append(dato)
         return result
+
+    def matrix_w_fixed_m(self, label, default_ch_av, max_val):
+        result = []
+        print("M=", self._M)
+        for MC in range(1, self._MC_runs+1):
+            dato = []
+            self._num_stream = 0
+            num_of_loops = 0
+            block_ev = 0
+            occupied.clear()
+            occupied_channels.clear()
+            self._line_occ.clear()
+            self._paths_ch_available.clear()
+            self._path_conn.clear()
+            self._all_Rbs.clear()
+            self._all_GSNRs.clear()
+            for vec in default_ch_av:
+                self._paths_ch_available.append(vec.copy())
+            self._traffic_matrix = 100 * self._M * np.ones((self._num_nodes, self._num_nodes))
+            self._traffic_matrix[np.diag_indices_from(self._traffic_matrix)] = 0
+            is_sat = False
+            while not is_sat and block_ev < max_val:
+                node1, node2 = self.matrix_connections()
+                is_inf = self.matrix_availability_slot(node1, node2)
+                if not is_inf:
+                    res = self.stream(node1, node2, label)
+                    if res[2] != "Quit":
+                        self.matrix_mgmt(node1, node2, res[2])
+                        is_sat = self.matrix_saturated()
+                        # num_of_loops += 1
+                    else:
+                        block_ev += 1
+            print(MC)
+            # print(min(self._all_Rbs), max(self._all_Rbs), round(np.average(self._all_Rbs), 3), sum(self._all_Rbs))
+            # print(min(self._all_GSNRs), max(self._all_GSNRs), round(np.average(self._all_GSNRs), 2))
+        #   dato = [run(0), bit_rates(1->4), GSNRs(5->7), block_ev]
+            dato = [MC, min(self._all_Rbs), max(self._all_Rbs), round(np.average(self._all_Rbs), 3), sum(self._all_Rbs),
+                    min(self._all_GSNRs), max(self._all_GSNRs), round(np.average(self._all_GSNRs), 2), block_ev]
+            result.append(dato)
+            # dato.clear()
+        return result
+
+    def stream_w_matrix(self, label):
+        results = []
+        default_ch_av = []
+        channel_availability = [1] * channels
+        for path in self._all_paths:
+            dim = [path, channel_availability]
+            default_ch_av.append(dim)
+        max_val = self._num_nodes ** 2
+        if self._M == 0:
+            results = self.matrix_w_varying_m(label, default_ch_av, max_val)
+        else:
+            results = self.matrix_w_fixed_m(label, default_ch_av, max_val)
+
+        return results
 
     def stream(self, node1, node2, label):
         paths = self.find_paths(node1, node2)
@@ -715,7 +777,7 @@ class Network(object):
                             found = False
                             while not found:
                                 if cnt == channels:
-                                    dato = [0, "None", 0.0]
+                                    dato = [0, "None", "Quit"]
                                     flag_propagate = 0
                                     found = True
                                 else:
@@ -777,7 +839,7 @@ class Network(object):
                         while not found:
                             is_free = 0
                             if cnt == channels:
-                                dato = [0, "None", 0.0]
+                                dato = [0, "None", "Quit"]
                                 flag_propagate = 0
                                 found = True
                             else:
@@ -801,12 +863,13 @@ class Network(object):
                             self._paths_ch_available[ch_to_mod][1] = list_copy[ind]
                         list_availability.clear()
             if flag_propagate == 1:
-                self.propagate(best_path, 0)
+                self._all_GSNRs.append(self.propagate(best_path, 0))
                 self._sign_info[best_path].channel = ch_occ
                 self._path_conn[best_path].latency = best_lat
                 self._path_conn[best_path].snr = best_snr
                 self._path_conn[best_path].bit_rate = (self.calculate_bit_rate(self._sign_info[best_path],
                                                                                self._nodes[best_path[0]].transceiver))
+                self._all_Rbs.append(self._path_conn[best_path].bit_rate)
                 dato.append(self._path_conn[best_path].bit_rate)
                 # print(node1, "->", node2, best_path, ch_occ, self._path_conn[best_path].bit_rate)
 
@@ -966,20 +1029,22 @@ class Network(object):
             self._line_occ = self._lines[line].line_occupied()
             self._optimal_pow = self._lines[line].optimized_launch_power(self._sign_info[line].signal_power)
         #     # print(self._sign_info[line].path, "Old Power:", '{:.3e}'.format(self._sign_info[line].signal_power))
-            self._sign_info[line].signal_power = self._optimal_pow
-            NLI, eta_nli = self._lines[line].nli_generation(self._sign_info[line].signal_power)
+            # self._sign_info[line].signal_power = self._optimal_pow
+            NLI, eta_nli = self._lines[line].nli_generation(self._optimal_pow)
             ASE = self._lines[line].ase_generation()
-            XT = self._lines[line].crosstalk_generation(self._sign_info[line].signal_power, self._sign_info[line]
+            XT = self._lines[line].crosstalk_generation(self._optimal_pow, self._sign_info[line]
                                                         .channel)
             self._sign_info[line].new_noise = self._lines[line].new_noise_generation(ASE, NLI, XT)
-            GSNR = self._sign_info[line].signal_power / self._sign_info[line].new_noise
+            GSNR = self._optimal_pow / self._sign_info[line].new_noise
             tmp = pow(GSNR, -1)
         #   # ISNR += tmp
             self._sign_info[sel_path].update_ISNR(tmp)
+            # self._sign_info[line].signal_power = 1e-3
         # print(sel_path, '{:.3e}'.format(self._sign_info[sel_path].signal_power), '{:.3e}'.format(GSNR),
         #       '{:.3e}'.format(self._sign_info[sel_path].ISNR))
-        new_GSNR = -1*lin2db(self._sign_info[sel_path].ISNR)
+        new_GSNR = round(-1*lin2db(self._sign_info[sel_path].ISNR), 3)
         self._sign_info[sel_path].GSNR = new_GSNR
+        self._sign_info[sel_path].reset_ISNR()
         # print(self._sign_info[sel_path].path, "GSNR [dB]:", round(self._sign_info[sel_path].GSNR, 3))
             # print(self._sign_info[line].path, "New Power:", '{:.3e}'.format(self._sign_info[line].signal_power))
-        pass
+        return new_GSNR

@@ -1,8 +1,10 @@
 import json
 import random
-
 import matplotlib.pyplot as plt
 from pathlib import Path
+
+import numpy as np
+from scipy.interpolate import CubicSpline
 
 # import numpy as np
 
@@ -17,16 +19,16 @@ INPUT_FOLDER = ROOT / 'resources'
 # f = open(file_input, 'r')
 # data = json.load(f)
 
-file_input1 = INPUT_FOLDER / 'Base_topology' / 'nodes_full_fixed.json'
-# file_input1 = INPUT_FOLDER / 'Exam_topology' / 'full_network_fixed.json'
+# file_input1 = INPUT_FOLDER / 'Base_topology' / 'nodes_full_fixed.json'
+file_input1 = INPUT_FOLDER / 'Exam_topology' / 'not_full_network_fixed.json'
 fixed_file = open(file_input1, 'r')
 data1 = json.load(fixed_file)
-file_input2 = INPUT_FOLDER / 'Base_topology' / 'nodes_full_flex.json'
-# file_input2 = INPUT_FOLDER / 'Exam_topology' / 'full_network_flex.json'
+# file_input2 = INPUT_FOLDER / 'Base_topology' / 'nodes_full_flex.json'
+file_input2 = INPUT_FOLDER / 'Exam_topology' / 'not_full_network_flex.json'
 flex_file = open(file_input2, 'r')
 data2 = json.load(flex_file)
-file_input3 = INPUT_FOLDER / 'Base_topology' / 'nodes_full_shannon.json'
-# file_input3 = INPUT_FOLDER / 'Exam_topology' / 'full_network_shannon.json'
+# file_input3 = INPUT_FOLDER / 'Base_topology' / 'nodes_full_shannon.json'
+file_input3 = INPUT_FOLDER / 'Exam_topology' / 'not_full_network_shannon.json'
 shan_file = open(file_input3, 'r')
 data3 = json.load(shan_file)
 
@@ -34,37 +36,185 @@ nodes = []
 vect_res_lat = []
 vect_res_snr = []
 total_capacity = 0.0
+MC_runs = 50
+scenario = "A"  # A = Single Traffic Matrix scenario; B = Network Congestion
 results = "SNR"
-for nds in data1:
-    nodes.append(nds)
-net_fixed = Network(data1)
-res_fixed = net_fixed.stream_w_matrix(results)
-print(res_fixed)
-net_flex = Network(data2)
-res_flex = net_flex.stream_w_matrix(results)
-print(res_flex)
-net_shannon = Network(data3)
-res_shannon = net_shannon.stream_w_matrix(results)
-print(res_shannon)
-#
+
 xpoint = []
-ypoint_fix = []
-ypoint_flx = []
-ypoint_shn = []
-plt.figure(3)
-for x in range(len(res_fixed)):
-    xpoint.append(res_fixed[x][0])
-    ypoint_fix.append(res_fixed[x][1])
-    ypoint_flx.append(res_flex[x][1])
-    ypoint_shn.append(res_shannon[x][1])
-plt.plot(xpoint, ypoint_fix, xpoint, ypoint_flx, xpoint, ypoint_shn)
-plt.title("Traffic matrix Saturation")
-plt.xlabel("M")
-plt.ylabel("Accepted connections")
-plt.legend(['fixed-rate', 'flex-rate', 'shannon-rate'])
-plt.grid()
-plt.show()
+av_bit_rate = []
+min_bit_rate = []
+max_bit_rate = []
+tot_bit_rate = []
+av_GSNR = []
+min_GSNR = []
+max_GSNR = []
+block_ev = []
+
+net = Network(data3)
+
+if scenario == "A":
+    #   data1-EXAM-FIXED-RATE    --> M = 17
+    #   data2-EXAM-FLEX-RATE     --> M = 30
+    #   data3-EXAM-SHANNON       --> M = 45
+    net.set_M_and_MC_runs(45, MC_runs)
+    res = net.stream_w_matrix(results)
+
+    for x in range(len(res)):
+        xpoint.append(res[x][0])
+        min_bit_rate.append(res[x][1])
+        max_bit_rate.append(res[x][2])
+        av_bit_rate.append(res[x][3])
+        tot_bit_rate.append(res[x][4])
+        min_GSNR.append(res[x][5])
+        max_GSNR.append(res[x][6])
+        av_GSNR.append(res[x][7])
+        block_ev.append(res[x][8])
+
+    print(f"Average value of total capacity: ", np.average(tot_bit_rate))
+    plt.figure(1)
+    plt.title("Total Capacity")
+    plt.xlabel("M")
+    plt.ylabel("Capacities [Gbps]")
+    plt.plot(xpoint, tot_bit_rate)
+    plt.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    plt.grid()
+
+    plt.figure(2)
+    plt.title(f'Per-link Average Capacity:')
+    plt.plot(xpoint, av_bit_rate)
+    plt.ylabel('[Gbps]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(3)
+    plt.title(f'Per-link Average GNSR:')
+    plt.plot(xpoint, av_GSNR)
+    plt.ylabel('[dB]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(4)
+    plt.title(f'Per-link Min Capacity:')
+    plt.plot(xpoint, min_bit_rate)
+    plt.ylabel('[Gbps]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(5)
+    plt.title(f'Per-link Min GNSR:')
+    plt.plot(xpoint, min_GSNR)
+    plt.ylabel('[dB]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(6)
+    plt.title(f'Per-link Max Capacity:')
+    plt.plot(xpoint, max_bit_rate)
+    plt.ylabel('[Gbps]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(7)
+    plt.title(f'Per-link Max GSNR:')
+    plt.plot(xpoint, max_GSNR)
+    plt.ylabel('[dB]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(8)
+    plt.title("Blocking event count")
+    plt.xlabel("M")
+    plt.ylabel("Occurrences")
+    plt.plot(xpoint, block_ev)
+    plt.grid()
+
+    plt.show()
+elif scenario == "B":
+    res = net.stream_w_matrix(results)
+
+    for x in range(len(res)):
+        xpoint.append(res[x][0])
+        min_bit_rate.append(res[x][1])
+        max_bit_rate.append(res[x][2])
+        av_bit_rate.append(res[x][3])
+        tot_bit_rate.append(res[x][4])
+        min_GSNR.append(res[x][5])
+        max_GSNR.append(res[x][6])
+        av_GSNR.append(res[x][7])
+        block_ev.append(res[x][8])
+
+    # print(min_max_bit_rate)
+    plt.figure(1)
+    plt.title("Total Capacity")
+    plt.xlabel("M")
+    plt.ylabel("Capacities [Gbps]")
+    plt.plot(xpoint, tot_bit_rate)
+    plt.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    plt.grid()
+
+    plt.figure(2)
+    plt.title(f'Per-link Average Capacity:')
+    plt.plot(xpoint, av_bit_rate)
+    plt.ylabel('[Gbps]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(3)
+    plt.title(f'Per-link Average GNSR:')
+    plt.plot(xpoint, av_GSNR)
+    plt.ylabel('[dB]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(4)
+    plt.title(f'Per-link Min Capacity:')
+    plt.plot(xpoint, min_bit_rate)
+    plt.ylabel('[Gbps]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(5)
+    plt.title(f'Per-link Min GNSR:')
+    plt.plot(xpoint, min_GSNR)
+    plt.ylabel('[dB]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(6)
+    plt.title(f'Per-link Max Capacity:')
+    plt.plot(xpoint, max_bit_rate)
+    plt.ylabel('[Gbps]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(7)
+    plt.title(f'Per-link Max GSNR:')
+    plt.plot(xpoint, max_GSNR)
+    plt.ylabel('[dB]')
+    plt.xlabel("Cycle")
+    plt.grid()
+
+    plt.figure(8)
+    plt.title("Blocking event count")
+    plt.xlabel("M")
+    plt.ylabel("Occurrences")
+    plt.plot(xpoint, block_ev)
+    plt.grid()
+
+    plt.show()
+else:
+    print("Unknown scenario")
+# print(res_fixed)    # Constant after M = 15
+# net_flex = Network(data2)
+# res_flex = net_flex.stream_w_matrix(results)
+# print(res_flex)     # Constant after M = 25
+# net_shannon = Network(data3)
+# res_shannon = net_shannon.stream_w_matrix(results)
+# print(res_shannon)      # Constant after M = 40
+#
 #num_con = 100
+# for nds in data1:
+#     nodes.append(nds)
 # draw = net.draw()  # return the dataframe and the draw
 # i = 1
 # while i <= num_con:
